@@ -97,24 +97,29 @@ function setAssistantAudioStream(mediaStream){
 /* ========= Start button ========= */
 $start.addEventListener('click', async () => {
   try {
-    $start.disabled = true; $status.textContent = 'auth...';
+    $start.disabled = true;
+    $status.textContent = 'auth…';
 
-    // 1) (Later) Call your Make /hume/session to get wsUrl
-    // const u = new URL(MAKE_SESSION_URL);
-    // u.searchParams.set('sid', sid);
-    // if (cfgId) u.searchParams.set('configId', cfgId);
-    // if (vid)   u.searchParams.set('voiceId',  vid);
-    // const sres = await fetch(u);
-    // const { wsUrl } = await sres.json();
-    // 2) (Later) Connect to Hume via WS/SDK, then call setAssistantAudioStream(stream)
+    const u = new URL(MAKE_SESSION_URL);
+    u.searchParams.set('sid', sid);
+    if (cfgId) u.searchParams.set('configId', cfgId);
+    if (vid)   u.searchParams.set('voiceId',  vid);
 
-    // DEMO MODE ONLY: play a short sound so you see the mouth animate
-    $status.textContent = 'demo — click the face';
+    const res = await fetch(u.toString());
+    if (!res.ok) throw new Error('session fetch failed');
+    const { wsUrl, access_token } = await res.json();
+
+    console.log('Hume session OK:', { wsUrl, access_token });
+    $status.textContent = 'session OK — ready to connect to Hume';
+
+    // keep the demo beep click working for now
   } catch (e) {
-    console.error(e); $status.textContent = 'error';
+    console.error(e);
+    $status.textContent = 'session error (check webhook URL/CORS)';
     $start.disabled = false;
   }
 });
+
 
 /* Quick demo without Hume: click the face to animate */
 document.getElementById('face').addEventListener('click', async () => {
