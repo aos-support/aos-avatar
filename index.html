@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>AOS Avatar</title>
+<style>
+  :root { --bg:#0b1020; --card:#121933; --accent:#5eead4; --text:#e6e8ef; }
+  body { margin:0; background:var(--bg); color:var(--text); font:500 16px/1.4 ui-sans-serif,system-ui; display:grid; place-items:center; min-height:100dvh; }
+  .card { width:min(420px,92vw); padding:20px; border-radius:18px; background:var(--card); box-shadow:0 12px 32px rgba(0,0,0,.35) }
+  .row { display:flex; align-items:center; gap:12px; justify-content:space-between }
+  .btn { appearance:none; border:0; padding:10px 14px; border-radius:12px; background:var(--accent); color:#041316; font-weight:700; cursor:pointer }
+  .btn:disabled { opacity:.6; cursor:not-allowed }
+  .small { opacity:.75; font-size:12px }
+  .face { width:210px; height:210px; margin:6px auto 16px; display:block; }
+  .eye { fill:#e6e8ef }
+  .mouth { fill:#e6e8ef; transform-origin:50% 50%; transition:transform 80ms linear }
+  .ring { fill:none; stroke:var(--accent); stroke-width:3; opacity:.4 }
+  .meter { height:6px; border-radius:999px; background:#0f1733; overflow:hidden; margin-top:10px }
+  .bar { height:100%; width:0%; background:var(--accent); transition:width 80ms linear }
+</style>
+</head>
+<body>
+  <div class="card">
+    <svg class="face" viewBox="0 0 220 220" aria-hidden="true" id="face">
+      <circle cx="110" cy="110" r="104" class="ring"/>
+      <circle cx="75"  cy="95"  r="8"   class="eye"/>
+      <circle cx="145" cy="95"  r="8"   class="eye"/>
+      <rect id="mouth" class="mouth" x="80" y="140" rx="12" ry="12" width="60" height="14"/>
+    </svg>
+
+    <div class="row">
+      <button id="startBtn" class="btn">Start</button>
+      <div class="small" id="status">idle</div>
+    </div>
+    <div class="meter"><div id="meterBar" class="bar"></div></div>
+
+    <!-- Assistant voice goes here -->
+    <audio id="assistantAudio" autoplay playsinline></audio>
+
+    <p class="small" style="margin-top:12px">
+      Tip: pass <code>?sid=USER123&configId=YOUR_CONFIG_ID</code> in the iframe URL.
+    </p>
+  </div>
+
+<script>
+/* ========= Config =========
+   Later, change this to your Make webhook URL for /hume/session.
+   For now we keep a local placeholder so the page loads fine. */
+const MAKE_SESSION_URL = 'https://YOUR_MAKE_WEBHOOK/hume_session';
+
+/* ========= Query params from iframe ========= */
+const qs    = new URLSearchParams(location.search);
+const sid   = qs.get('sid')      || 'demo-user';
+const cfgId = qs.get('configId') || '';
+const vid   = qs.get('voiceId')  || '';
+
+/* ========= Elements ========= */
+const $status = document.getElementById('status');
+const $start  = document.getElementById('startBtn');
+const $mouth  = document.getElementById('mouth');
+const $bar    = document.getElementById('meterBar');
+const $audio  = document.getElementById('assistantAudio');
+
+/* ========= Audio visualizer (animates mouth with volume) ========= */
+let audioCtx, analyser, dataArray, rafId;
+
+function attachAnalyserTo(elementOrStream) {
+  audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  const src = elementOrStream instanceof MediaStream
+    ? audioCtx.createMediaStreamSource(elementOrStream)
+    : audioCtx.createMediaElementSource(elementOrStream);
+  src.connect(analyser).connect(audioCtx.destination);
+  dataArray = new Uint8Array(analyser.frequencyBinCount);
+  tick();
+}
+
+function tick(){
+  analyser.getByteFrequencyData(dataArray);
+  let sum = 0; for (let i=4;i<32;i++) sum += dataArray[i];
+  const avg = sum / 28;                 // 0..255
+  const gain = Math.min(1, avg/80);     // normalize
+  $mouth.style.transform = `scale(${1+gain*0.9}, ${1+gain*0.3})`;
+  $bar.style.width = `${Math.round(gain*100)}%`;
+  rafId = requestAnimationFrame(tick);
+}
+
+/* ========= Hooks you’ll call from Hume SDK later ========= */
+function setAssistantAudioStream(mediaStream){
+  $audio.srcObject = mediaStream;
+  attachAnalyserTo(mediaStream);
+  $status.textContent = 'connected';
+}
+
+/* ========= Start button ========= */
+$start.addEventListener('click', async () => {
+  try {
+    $start.disabled = true; $status.textContent = 'auth...';
+
+    // 1) (Later) Call your Make /hume/session to get wsUrl
+    // const u = new URL(MAKE_SESSION_URL);
+    // u.searchParams.set('sid', sid);
+    // if (cfgId) u.searchParams.set('configId', cfgId);
+    // if (vid)   u.searchParams.set('voiceId',  vid);
+    // const sres = await fetch(u);
+    // const { wsUrl } = await sres.json();
+    // 2) (Later) Connect to Hume via WS/SDK, then call setAssistantAudioStream(stream)
+
+    // DEMO MODE ONLY: play a short sound so you see the mouth animate
+    $status.textContent = 'demo — click the face';
+  } catch (e) {
+    console.error(e); $status.textContent = 'error';
+    $start.disabled = false;
+  }
+});
+
+/* Quick demo without Hume: click the face to animate */
+document.getElementById('face').addEventListener('click', async () => {
+  $audio.src = 'https://upload.wikimedia.org/wikipedia/commons/4/4f/Beep-09.ogg';
+  await $audio.play();
+  attachAnalyserTo($audio);
+});
+</script>
+</body>
+</html>
