@@ -118,10 +118,53 @@ $start.addEventListener('click', async () => {
 
 /* Quick demo without Hume: click the face to animate */
 document.getElementById('face').addEventListener('click', async () => {
-  $audio.src = 'https://upload.wikimedia.org/wikipedia/commons/4/4f/Beep-09.ogg';
-  await $audio.play();
-  attachAnalyserTo($audio);
+  try {
+    // Ensure AudioContext exists and is allowed to play
+    audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+
+    // Create analyser if not present
+    if (!analyser) {
+      analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 1024;
+      dataArray = new Uint8Array(analyser.frequencyBinCount);
+    }
+
+    // Create a short sine beep (no external file needed)
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = 880; // A5
+    gain.gain.value = 0.0001;
+
+    // Wire graph: osc -> gain -> analyser -> speakers
+    osc.connect(gain);
+    gain.connect(analyser);
+    analyser.connect(audioCtx.destination);
+
+    // Start visual loop if not already running
+    if (!rafId) tick();
+
+    // Play a 250ms beep with quick fade-in/out
+    const now = audioCtx.currentTime;
+    osc.start(now);
+    gain.gain.exponentialRampToValueAtTime(0.2, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+    osc.stop(now + 0.30);
+
+    // Clean up after stop
+    osc.onended = () => {
+      osc.disconnect(); gain.disconnect();
+      // analyser stays for future audio (Hume stream later)
+    };
+
+    $status.textContent = 'demo beep ✓';
+  } catch (err) {
+    console.error(err);
+    $status.textContent = 'could not play (try clicking Start first)';
+  }
 });
+
 </script>
 </body>
 </html>
