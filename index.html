@@ -44,6 +44,12 @@
   </div>
 
 <script>
+// Add this near the other consts:
+const DEFAULT_CONFIG_ID = 'cab67954-6a4e-448e-aa62-50eab156f3a0';
+
+// Replace your cfgId line with:
+const cfgId = qs.get('configId') || DEFAULT_CONFIG_ID;
+  
 /* ========= Config =========
    Later, change this to your Make webhook URL for /hume/session.
    For now we keep a local placeholder so the page loads fine. */
