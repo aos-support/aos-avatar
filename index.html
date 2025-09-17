@@ -46,9 +46,6 @@
 <script>
 // Add this near the other consts:
 const DEFAULT_CONFIG_ID = 'cab67954-6a4e-448e-aa62-50eab156f3a0';
-
-// Replace your cfgId line with:
-const cfgId = qs.get('configId') || DEFAULT_CONFIG_ID;
   
 /* ========= Config =========
    Later, change this to your Make webhook URL for /hume/session.
@@ -58,7 +55,7 @@ const MAKE_SESSION_URL = 'https://hook.us2.make.com/6b6twrhnkm75rfiv38jcf2414uz2
 /* ========= Query params from iframe ========= */
 const qs    = new URLSearchParams(location.search);
 const sid   = qs.get('sid')      || 'demo-user';
-const cfgId = qs.get('configId') || '';
+const cfgId = qs.get('configId') || DEFAULT_CONFIG_ID;
 const vid   = qs.get('voiceId')  || '';
 
 /* ========= Elements ========= */
