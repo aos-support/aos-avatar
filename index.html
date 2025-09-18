@@ -36,7 +36,7 @@
     <div class="meter"><div id="meterBar" class="bar"></div></div>
 
     <!-- Assistant voice goes here -->
-    <audio id="assistantAudio" autoplay playsinline></audio>
+    <audio id="assistantAudio" autoplay playsinline crossorigin="anonymous"></audio>
 
     <p class="small" style="margin-top:12px">
       Tip: pass <code>?sid=USER123&configId=YOUR_CONFIG_ID</code> in the iframe URL.
@@ -44,18 +44,14 @@
   </div>
 
 <script>
- 
-/* ========= Config =========
-   Later, change this to your Make webhook URL for /hume/session.
-   For now we keep a local placeholder so the page loads fine. */
-  // --- Make endpoints ---
+/* ========= Endpoints & Config ========= */
 const MAKE_GET_PROGRESS_URL = 'https://hook.us2.make.com/4acwokdxb0jif73t9miplk2b4fbi556d';
-const MAKE_SESSION_URL = 'https://hook.us2.make.com/6b6twrhnkm75rfiv38jcf2414uz2rqfg';
-const DEFAULT_CONFIG_ID = 'cab67954-6a4e-448e-aa62-50eab156f3a0';
- 
+const MAKE_SESSION_URL      = 'https://hook.us2.make.com/6b6twrhnkm75rfiv38jcf2414uz2rqfg';
+const DEFAULT_CONFIG_ID     = 'cab67954-6a4e-448e-aa62-50eab156f3a0'; // your Hume config
+
 /* ========= Query params from iframe ========= */
 const qs    = new URLSearchParams(location.search);
-const sid   = qs.get('sid')      || 'demo-user';
+const sid   = qs.get('sid')      || 'demo-user';     // replace with required later
 const cfgId = qs.get('configId') || DEFAULT_CONFIG_ID;
 const vid   = qs.get('voiceId')  || '';
 
@@ -68,16 +64,6 @@ const $audio  = document.getElementById('assistantAudio');
 
 /* ========= Audio visualizer (animates mouth with volume) ========= */
 let audioCtx, analyser, dataArray, rafId;
-  
-/* =========get user progress function ========= */
-async function callMakeGetProgress({ studentId, courseId }) {
-  const u = new URL(MAKE_GET_PROGRESS_URL);
-  u.searchParams.set('sid', studentId);
-  if (courseId) u.searchParams.set('courseId', courseId);
-  const r = await fetch(u.toString(), { method: 'GET' });
-  if (!r.ok) throw new Error('get_progress failed');
-  return r.json(); // { studentId, courses: [...] }
-}
 
 function attachAnalyserTo(elementOrStream) {
   audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
@@ -90,7 +76,6 @@ function attachAnalyserTo(elementOrStream) {
   dataArray = new Uint8Array(analyser.frequencyBinCount);
   tick();
 }
-
 function tick(){
   analyser.getByteFrequencyData(dataArray);
   let sum = 0; for (let i=4;i<32;i++) sum += dataArray[i];
@@ -101,11 +86,74 @@ function tick(){
   rafId = requestAnimationFrame(tick);
 }
 
-/* ========= Hooks you’ll call from Hume SDK later ========= */
+/* ========= Tool endpoints (Make) ========= */
+async function callMakeGetProgress({ studentId, courseId }) {
+  const u = new URL(MAKE_GET_PROGRESS_URL);
+  u.searchParams.set('sid', studentId);
+  if (courseId) u.searchParams.set('courseId', courseId);
+  const r = await fetch(u.toString(), { method: 'GET' });
+  if (!r.ok) throw new Error('get_progress failed');
+  return r.json(); // { studentId, courses: [...] }
+}
+
+/* ========= Tool-call router (Hume -> Make -> Hume) ========= */
+async function onToolCall(name, params, respond) {
+  try {
+    if (name === 'get_student_progress') {
+      const data = await callMakeGetProgress({
+        studentId: params.studentId || sid,
+        courseId : params.courseId  || ''
+      });
+      await respond(data);
+      return;
+    }
+
+    // TODO: add other tools later (kb_search, create_reminder, log_event)
+    await respond({ ok: true });
+  } catch (err) {
+    console.error('tool error', err);
+    await respond({ error: String(err) });
+  }
+}
+
+/* ========= Hooks called when assistant audio is available ========= */
 function setAssistantAudioStream(mediaStream){
   $audio.srcObject = mediaStream;
   attachAnalyserTo(mediaStream);
   $status.textContent = 'connected';
+}
+
+/* ========= Hume connector (SDK-friendly; falls back gracefully) ========= */
+async function connectToHume(wsUrl){
+  // If Hume SDK is available globally, use it. Otherwise show a message.
+  if (window.HumeClient?.connect) {
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const client = await window.HumeClient.connect(wsUrl); // hypothetical SDK entry
+    // send mic to Hume
+    await client.sendUserAudio(mic);
+    // get assistant audio stream, animate mouth
+    const assistantStream = await client.getAssistantAudioStream();
+    setAssistantAudioStream(assistantStream);
+
+    // tool calls
+    client.on('tool_call', async (ev) => {
+      // ev: { id, name, parameters (json string) }
+      let params = {};
+      try { params = typeof ev.parameters === 'string' ? JSON.parse(ev.parameters) : (ev.parameters || {}); } catch {}
+      const respond = (payload) => client.toolRespond(ev.id, payload);
+      await onToolCall(ev.name, params, respond);
+    });
+
+    // status
+    client.on('connected', () => $status.textContent = 'connected ✓');
+    client.on('disconnected', () => $status.textContent = 'disconnected');
+
+    return;
+  }
+
+  // Fallback if SDK isn’t loaded yet
+  console.warn('HumeClient SDK not found. Include their web SDK to enable live chat.');
+  $status.textContent = 'session OK — add Hume SDK to talk';
 }
 
 /* ========= Start button ========= */
@@ -114,6 +162,7 @@ $start.addEventListener('click', async () => {
     $start.disabled = true;
     $status.textContent = 'auth…';
 
+    // 1) Get short-lived wsUrl from Make /hume/session
     const u = new URL(MAKE_SESSION_URL);
     u.searchParams.set('sid', sid);
     if (cfgId) u.searchParams.set('configId', cfgId);
@@ -121,12 +170,14 @@ $start.addEventListener('click', async () => {
 
     const res = await fetch(u.toString());
     if (!res.ok) throw new Error('session fetch failed');
-    const { wsUrl, access_token } = await res.json();
+    const { wsUrl } = await res.json();
 
-    console.log('Hume session OK:', { wsUrl, access_token });
-    $status.textContent = 'session OK — ready to connect to Hume';
+    console.log('Hume session OK:', { wsUrl });
+    $status.textContent = 'connecting…';
 
-    // keep the demo beep click working for now
+    // 2) Connect to Hume (if SDK present) and wire tools/audio
+    await connectToHume(wsUrl);
+
   } catch (e) {
     console.error(e);
     $status.textContent = 'session error (check webhook URL/CORS)';
@@ -134,56 +185,30 @@ $start.addEventListener('click', async () => {
   }
 });
 
-
-/* Quick demo without Hume: click the face to animate */
+/* ========= Demo beep on face click (still handy for testing) ========= */
 document.getElementById('face').addEventListener('click', async () => {
   try {
-    // Ensure AudioContext exists and is allowed to play
     audioCtx = audioCtx || new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
+    if (!analyser) { analyser = audioCtx.createAnalyser(); analyser.fftSize = 1024; dataArray = new Uint8Array(analyser.frequencyBinCount); }
 
-    // Create analyser if not present
-    if (!analyser) {
-      analyser = audioCtx.createAnalyser();
-      analyser.fftSize = 1024;
-      dataArray = new Uint8Array(analyser.frequencyBinCount);
-    }
-
-    // Create a short sine beep (no external file needed)
     const osc = audioCtx.createOscillator();
     const gain = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = 880; // A5
-    gain.gain.value = 0.0001;
-
-    // Wire graph: osc -> gain -> analyser -> speakers
-    osc.connect(gain);
-    gain.connect(analyser);
-    analyser.connect(audioCtx.destination);
-
-    // Start visual loop if not already running
+    osc.type = 'sine'; osc.frequency.value = 880; gain.gain.value = 0.0001;
+    osc.connect(gain); gain.connect(analyser); analyser.connect(audioCtx.destination);
     if (!rafId) tick();
 
-    // Play a 250ms beep with quick fade-in/out
     const now = audioCtx.currentTime;
     osc.start(now);
     gain.gain.exponentialRampToValueAtTime(0.2, now + 0.01);
     gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
     osc.stop(now + 0.30);
-
-    // Clean up after stop
-    osc.onended = () => {
-      osc.disconnect(); gain.disconnect();
-      // analyser stays for future audio (Hume stream later)
-    };
-
     $status.textContent = 'demo beep ✓';
   } catch (err) {
     console.error(err);
     $status.textContent = 'could not play (try clicking Start first)';
   }
 });
-
 </script>
 </body>
 </html>
